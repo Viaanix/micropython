@@ -56,6 +56,10 @@ STATIC void check_fd_is_open(const mp_obj_vfs_posix_file_t *o) {
 #define check_fd_is_open(o)
 #endif
 
+#if MICROPY_VFS_POSIX_ZEPHYR
+#define O_TRUNC 0
+#endif
+
 STATIC void vfs_posix_file_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind) {
     (void)kind;
     mp_obj_vfs_posix_file_t *self = MP_OBJ_TO_PTR(self_in);

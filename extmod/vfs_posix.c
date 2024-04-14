@@ -57,6 +57,24 @@ typedef struct _mp_obj_vfs_posix_t {
     bool readonly;
 } mp_obj_vfs_posix_t;
 
+#if MICROPY_VFS_POSIX_ZEPHYR
+static char *getcwd(char *buf, size_t size)
+{
+    strncpy(buf, "/", size);
+    return buf;
+}
+
+int chdir(const char *path)
+{
+    return -ENOSYS;
+}
+
+int rmdir(const char *path)
+{
+    return fs_unlink(path);
+}
+#endif
+
 STATIC const char *vfs_posix_get_path_str(mp_obj_vfs_posix_t *self, mp_obj_t path) {
     const char *path_str = mp_obj_str_get_str(path);
     if (self->root_len == 0 || path_str[0] != '/') {

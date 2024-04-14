@@ -29,6 +29,10 @@
 #include "py/lexer.h"
 #include "py/obj.h"
 
+#ifndef MICROPY_VFS_POSIX_ZEPHYR
+#define MICROPY_VFS_POSIX_ZEPHYR (0)
+#endif
+
 extern const mp_obj_type_t mp_type_vfs_posix;
 extern const mp_obj_type_t mp_type_vfs_posix_fileio;
 extern const mp_obj_type_t mp_type_vfs_posix_textio;
