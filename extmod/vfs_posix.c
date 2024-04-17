@@ -54,33 +54,39 @@ typedef struct _mp_obj_vfs_posix_t {
     mp_obj_base_t base;
     vstr_t root;
     size_t root_len;
+#if MICROPY_VFS_POSIX_ZEPHYR
+    vstr_t cwd;
+#endif
     bool readonly;
 } mp_obj_vfs_posix_t;
 
 #if MICROPY_VFS_POSIX_ZEPHYR
-static char *getcwd(char *buf, size_t size)
-{
-    strncpy(buf, "/", size);
-    return buf;
-}
-
-int chdir(const char *path)
-{
-    return -ENOSYS;
-}
-
 int rmdir(const char *path)
 {
     return fs_unlink(path);
+}
+
+STATIC const char *vfs_posix_get_path_str_from_str(mp_obj_vfs_posix_t *self, const char *path_str) {
+    if (self->root_len == 0 || ((path_str[0] != '/') && !MICROPY_VFS_POSIX_ZEPHYR) ) {
+        return path_str;
+    } else {
+        self->root.len = self->root_len - 1;
+        vstr_add_strn(&self->root, self->cwd.buf, self->cwd.len);
+        vstr_add_str(&self->root, path_str);
+        return vstr_null_terminated_str(&self->root);
+    }
 }
 #endif
 
 STATIC const char *vfs_posix_get_path_str(mp_obj_vfs_posix_t *self, mp_obj_t path) {
     const char *path_str = mp_obj_str_get_str(path);
-    if (self->root_len == 0 || path_str[0] != '/') {
+    if (self->root_len == 0 || ((path_str[0] != '/') && !MICROPY_VFS_POSIX_ZEPHYR) ) {
         return path_str;
     } else {
         self->root.len = self->root_len - 1;
+#if MICROPY_VFS_POSIX_ZEPHYR
+        vstr_add_strn(&self->root, self->cwd.buf, self->cwd.len);
+#endif
         vstr_add_str(&self->root, path_str);
         return vstr_null_terminated_str(&self->root);
     }
@@ -88,10 +94,13 @@ STATIC const char *vfs_posix_get_path_str(mp_obj_vfs_posix_t *self, mp_obj_t pat
 
 STATIC mp_obj_t vfs_posix_get_path_obj(mp_obj_vfs_posix_t *self, mp_obj_t path) {
     const char *path_str = mp_obj_str_get_str(path);
-    if (self->root_len == 0 || path_str[0] != '/') {
+    if (self->root_len == 0 || ((path_str[0] != '/') && !MICROPY_VFS_POSIX_ZEPHYR) ) {
         return path;
     } else {
         self->root.len = self->root_len - 1;
+#if MICROPY_VFS_POSIX_ZEPHYR
+        vstr_add_strn(&self->root, self->cwd.buf, self->cwd.len);
+#endif
         vstr_add_str(&self->root, path_str);
         return mp_obj_new_str(self->root.buf, self->root.len);
     }
@@ -110,6 +119,9 @@ STATIC mp_import_stat_t mp_vfs_posix_import_stat(void *self_in, const char *path
     mp_obj_vfs_posix_t *self = self_in;
     if (self->root_len != 0) {
         self->root.len = self->root_len;
+#if MICROPY_VFS_POSIX_ZEPHYR
+        vstr_add_strn(&self->root, self->cwd.buf, self->cwd.len);
+#endif
         vstr_add_str(&self->root, path);
         path = vstr_null_terminated_str(&self->root);
     }
@@ -142,17 +154,23 @@ STATIC mp_obj_t vfs_posix_make_new(const mp_obj_type_t *type, size_t n_args, siz
         }
         #else
         if (root[0] != '\0' && root[0] != '/') {
+#if !MICROPY_VFS_POSIX_ZEPHYR
             char buf[MICROPY_ALLOC_PATH_MAX + 1];
             const char *cwd = getcwd(buf, sizeof(buf));
             if (cwd == NULL) {
                 mp_raise_OSError(errno);
             }
             vstr_add_str(&vfs->root, cwd);
+#endif
             vstr_add_char(&vfs->root, '/');
         }
         vstr_add_str(&vfs->root, root);
         #endif
         vstr_add_char(&vfs->root, '/');
+#if MICROPY_VFS_POSIX_ZEPHYR
+        vstr_init(&vfs->cwd, 1);
+        vstr_add_char(&vfs->cwd, '/');
+#endif
     }
     vfs->root_len = vfs->root.len;
     vfs->readonly = false;
@@ -192,13 +210,87 @@ STATIC mp_obj_t vfs_posix_open(mp_obj_t self_in, mp_obj_t path_in, mp_obj_t mode
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_3(vfs_posix_open_obj, vfs_posix_open);
 
+
+#if MICROPY_VFS_POSIX_ZEPHYR
+static void canonicalize_path(vstr_t *str)
+{
+    // If not at root add trailing / to make it easy to build paths
+    // and then normalise the path
+    if (vstr_len(str) != 1) {
+        vstr_add_byte(str, '/');
+
+        #define CWD_LEN (vstr_len(str))
+        size_t to = 1;
+        size_t from = 1;
+        char *cwd = vstr_str(str);
+        while (from < CWD_LEN) {
+            for (; from < CWD_LEN && cwd[from] == '/'; ++from) {
+                // Scan for the start
+            }
+            if (from > to) {
+                // Found excessive slash chars, squeeze them out
+                vstr_cut_out_bytes(str, to, from - to);
+                from = to;
+            }
+            for (; from < CWD_LEN && cwd[from] != '/'; ++from) {
+                // Scan for the next /
+            }
+            if ((from - to) == 1 && cwd[to] == '.') {
+                // './', ignore
+                vstr_cut_out_bytes(str, to, ++from - to);
+                from = to;
+            } else if ((from - to) == 2 && cwd[to] == '.' && cwd[to + 1] == '.') {
+                // '../', skip back
+                if (to > 1) {
+                    // Only skip back if not at the tip
+                    for (--to; to > 1 && cwd[to - 1] != '/'; --to) {
+                        // Skip back
+                    }
+                }
+                vstr_cut_out_bytes(str, to, ++from - to);
+                from = to;
+            } else {
+                // Normal element, keep it and just move the offset
+                to = ++from;
+            }
+        }
+    }
+}
+#endif
+
 STATIC mp_obj_t vfs_posix_chdir(mp_obj_t self_in, mp_obj_t path_in) {
+#if !MICROPY_VFS_POSIX_ZEPHYR
     return vfs_posix_fun1_helper(self_in, path_in, chdir);
+#else
+    mp_obj_vfs_posix_t *self = MP_OBJ_TO_PTR(self_in);
+    const char *new_path_part = mp_obj_str_get_str(path_in);
+
+    if (new_path_part[0] == '/') { // Is absolute
+        vstr_reset(&self->cwd);
+        vstr_add_str(&self->cwd, new_path_part);
+    } else { // Is relative
+        vstr_add_char(&self->cwd, '/');
+        vstr_add_str(&self->cwd, new_path_part);
+    }
+
+    canonicalize_path(&self->cwd);
+    if (vstr_len(&self->cwd) == 0)
+        vstr_add_char(&self->cwd, '/');
+
+    const char *new_parth_str = vfs_posix_get_path_str_from_str(self, mp_const_none);
+    struct fs_dirent entry;
+    if (fs_stat(new_parth_str, &entry) != 0)
+        mp_raise_OSError(MP_ENOENT);
+    if (entry.type != FS_DIR_ENTRY_DIR)
+        mp_raise_OSError(MP_ENOTDIR);
+    return mp_const_none;
+#endif
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_2(vfs_posix_chdir_obj, vfs_posix_chdir);
 
 STATIC mp_obj_t vfs_posix_getcwd(mp_obj_t self_in) {
     mp_obj_vfs_posix_t *self = MP_OBJ_TO_PTR(self_in);
+#if !MICROPY_VFS_POSIX_ZEPHYR
     char buf[MICROPY_ALLOC_PATH_MAX + 1];
     const char *ret = getcwd(buf, sizeof(buf));
     if (ret == NULL) {
@@ -213,6 +305,9 @@ STATIC mp_obj_t vfs_posix_getcwd(mp_obj_t self_in) {
         #endif
     }
     return mp_obj_new_str(ret, strlen(ret));
+#else
+    return mp_obj_new_str(self->cwd.buf, self->cwd.len);
+#endif
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(vfs_posix_getcwd_obj, vfs_posix_getcwd);
 
