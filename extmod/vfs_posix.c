@@ -484,6 +484,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(vfs_posix_stat_obj, vfs_posix_stat);
 #define USE_STATFS 1
 #endif
 
+#if !MICROPY_VFS_POSIX_ZEPHYR
 #if USE_STATFS
 #include <sys/vfs.h>
 #define STRUCT_STATVFS struct statfs
@@ -499,6 +500,16 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(vfs_posix_stat_obj, vfs_posix_stat);
 #define F_NAMEMAX sb.f_namemax
 #define F_FLAG sb.f_flag
 #endif
+#else
+#include <zephyr/fs/fs.h>
+
+#define STRUCT_STATVFS struct fs_statvfs
+#define STATVFS fs_statvfs
+#define F_FAVAIL 0
+#define F_NAMEMAX 0
+#define F_FLAG 0
+#endif
+
 
 STATIC mp_obj_t vfs_posix_statvfs(mp_obj_t self_in, mp_obj_t path_in) {
     mp_obj_vfs_posix_t *self = MP_OBJ_TO_PTR(self_in);
@@ -511,9 +522,15 @@ STATIC mp_obj_t vfs_posix_statvfs(mp_obj_t self_in, mp_obj_t path_in) {
     t->items[1] = MP_OBJ_NEW_SMALL_INT(sb.f_frsize);
     t->items[2] = MP_OBJ_NEW_SMALL_INT(sb.f_blocks);
     t->items[3] = MP_OBJ_NEW_SMALL_INT(sb.f_bfree);
+#if !MICROPY_VFS_POSIX_ZEPHYR
     t->items[4] = MP_OBJ_NEW_SMALL_INT(sb.f_bavail);
     t->items[5] = MP_OBJ_NEW_SMALL_INT(sb.f_files);
     t->items[6] = MP_OBJ_NEW_SMALL_INT(sb.f_ffree);
+#else
+    t->items[4] = MP_OBJ_NEW_SMALL_INT(0);
+    t->items[5] = MP_OBJ_NEW_SMALL_INT(0);
+    t->items[6] = MP_OBJ_NEW_SMALL_INT(0);
+#endif
     t->items[7] = MP_OBJ_NEW_SMALL_INT(F_FAVAIL);
     t->items[8] = MP_OBJ_NEW_SMALL_INT(F_FLAG);
     t->items[9] = MP_OBJ_NEW_SMALL_INT(F_NAMEMAX);
