@@ -73,6 +73,7 @@ set(MICROPY_SOURCE_QSTR
     ${MICROPY_SOURCE_SHARED}
     ${MICROPY_SOURCE_LIB}
     ${MICROPY_SOURCE_PORT}
+    ${MICROPY_SOURCE_USERMOD}
 )
 
 zephyr_get_include_directories_for_lang(C includes)
