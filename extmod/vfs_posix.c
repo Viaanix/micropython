@@ -125,6 +125,20 @@ STATIC mp_import_stat_t mp_vfs_posix_import_stat(void *self_in, const char *path
         vstr_add_str(&self->root, path);
         path = vstr_null_terminated_str(&self->root);
     }
+#if MICROPY_VFS_POSIX_ZEPHYR
+	struct fs_dirent *st = k_malloc(sizeof(struct fs_dirent));
+    mp_import_stat_t retcode = MP_IMPORT_STAT_NO_EXIST;
+    if (st) {
+        if (fs_stat(path, st) == 0) {
+            if (st->type == FS_DIR_ENTRY_FILE)
+                retcode = MP_IMPORT_STAT_FILE;
+            else if (st->type == FS_DIR_ENTRY_DIR)
+                retcode = MP_IMPORT_STAT_DIR;
+        }
+        k_free(st);
+    }
+    return retcode;
+#else
     struct stat st;
     if (stat(path, &st) == 0) {
         if (S_ISDIR(st.st_mode)) {
@@ -134,6 +148,7 @@ STATIC mp_import_stat_t mp_vfs_posix_import_stat(void *self_in, const char *path
         }
     }
     return MP_IMPORT_STAT_NO_EXIST;
+#endif
 }
 
 STATIC mp_obj_t vfs_posix_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
