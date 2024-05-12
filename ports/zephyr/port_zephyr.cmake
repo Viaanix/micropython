@@ -112,9 +112,4 @@ add_dependencies(micropython_lib zephyr_generated_headers)
 
 include(${MICROPY_DIR}/py/mkrules.cmake)
 
-# target_sources(app PRIVATE
-#     src/zephyr_start.c
-#     src/zephyr_getchar.c
-# )
-
-# target_link_libraries(app PRIVATE micropython_lib)
+add_dependencies(BUILD_FROZEN_CONTENT zephyr_generated_headers)
