@@ -76,6 +76,37 @@ STATIC const char *vfs_posix_get_path_str_from_str(mp_obj_vfs_posix_t *self, con
         return vstr_null_terminated_str(&self->root);
     }
 }
+
+STATIC int zephyr_get_file_size_and_type(const char *path, int *st_type, int *st_size)
+{
+    int ret;
+    struct fs_dir_t zd;
+    fs_dir_t_init(&zd);
+    ret = fs_opendir(&zd, path);
+    if (ret == 0) {
+        fs_closedir(&zd);
+        *st_type = FS_DIR_ENTRY_DIR;
+        *st_size = 0;
+        ret = 0;
+    } else if (ret != -EINVAL) {
+        *st_type = FS_DIR_ENTRY_FILE;
+        struct fs_file_t zf;
+        fs_file_t_init(&zf);
+        ret = fs_open(&zf, path, FS_O_READ);
+        if (ret == 0) {
+            ret = fs_seek(&zf, 0, FS_SEEK_END);
+            if (ret == 0) {
+                *st_size = fs_tell(&zf);
+                if (*st_size >= 0) {
+                    ret = *st_size;
+                }
+            }
+            fs_close(&zf);
+        }
+    }
+    return ret;
+}
+
 #endif
 
 STATIC const char *vfs_posix_get_path_str(mp_obj_vfs_posix_t *self, mp_obj_t path) {
@@ -474,11 +505,12 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(vfs_posix_rmdir_obj, vfs_posix_rmdir);
 
 STATIC mp_obj_t vfs_posix_stat(mp_obj_t self_in, mp_obj_t path_in) {
     mp_obj_vfs_posix_t *self = MP_OBJ_TO_PTR(self_in);
-    struct stat sb;
     const char *path = vfs_posix_get_path_str(self, path_in);
     int ret;
-    MP_HAL_RETRY_SYSCALL(ret, stat(path, &sb), mp_raise_OSError(err));
     mp_obj_tuple_t *t = MP_OBJ_TO_PTR(mp_obj_new_tuple(10, NULL));
+#if !MICROPY_VFS_POSIX_ZEPHYR
+    struct stat sb;
+    MP_HAL_RETRY_SYSCALL(ret, stat(path, &sb), mp_raise_OSError(err));
     t->items[0] = MP_OBJ_NEW_SMALL_INT(sb.st_mode);
     t->items[1] = mp_obj_new_int_from_uint(sb.st_ino);
     t->items[2] = mp_obj_new_int_from_uint(sb.st_dev);
@@ -489,6 +521,27 @@ STATIC mp_obj_t vfs_posix_stat(mp_obj_t self_in, mp_obj_t path_in) {
     t->items[7] = mp_obj_new_int_from_uint(sb.st_atime);
     t->items[8] = mp_obj_new_int_from_uint(sb.st_mtime);
     t->items[9] = mp_obj_new_int_from_uint(sb.st_ctime);
+#else
+    struct fs_dirent *dent = k_malloc(sizeof(struct fs_dirent));
+    if (!dent) {
+        mp_raise_OSError(ENOMEM);
+        return mp_const_none;
+    }
+    int st_size;
+    int st_type;
+    MP_HAL_RETRY_SYSCALL(ret, zephyr_get_file_size_and_type(path, &st_size, &st_type), mp_raise_OSError(err));
+    t->items[0] = MP_OBJ_NEW_SMALL_INT(st_type);
+    t->items[1] = mp_obj_new_int_from_uint(0);       // st_ino
+    t->items[2] = mp_obj_new_int_from_uint(0);       // st_dev
+    t->items[3] = mp_obj_new_int_from_uint(0);       // st_nlink
+    t->items[4] = mp_obj_new_int_from_uint(0);       // st_uid
+    t->items[5] = mp_obj_new_int_from_uint(0);       // st_gid
+    t->items[6] = mp_obj_new_int_from_uint(st_size);
+    t->items[7] = mp_obj_new_int_from_uint(0);       // st_atime
+    t->items[8] = mp_obj_new_int_from_uint(0);       // st_mtime
+    t->items[9] = mp_obj_new_int_from_uint(0);       // st_ctime
+    k_free(dent);
+#endif
     return MP_OBJ_FROM_PTR(t);
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_2(vfs_posix_stat_obj, vfs_posix_stat);
